@@ -38,7 +38,15 @@ jobs:
 
       - name: Parse URLs JSON
         run: |
-          echo '${{ github.event.inputs.urls_json }}' | jq -r '.[]' > urls.txt
+          INPUT='${{ github.event.inputs.urls_json }}'
+          # Check if INPUT is a JSON array
+          if echo "$INPUT" | jq -e 'type == "array"' > /dev/null 2>&1; then
+            echo "$INPUT" | jq -r '.[]' > urls.txt
+          else
+            # Assume it's a single URL (remove surrounding quotes if any)
+            CLEANED=$(echo "$INPUT" | sed 's/^"//;s/"$//')
+            echo "$CLEANED" > urls.txt
+          fi
 
       - name: Download files
         shell: bash
