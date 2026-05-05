@@ -1,12 +1,13 @@
-name: Download Multiple URLs and Sync to Google Drive
+name: Multi URL Download and Upload to Google Drive
 
 on:
   workflow_dispatch:
     inputs:
-      file_urls:
-        description: "Paste multiple file URLs (one per line)"
+      urls_json:
+        description: 'JSON array of URLs'
         required: true
         type: string
+        default: '["https://example.com/file1.zip","https://example.com/file2.mp4"]'
 
 jobs:
   transfer:
@@ -14,11 +15,13 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install rclone
+      - name: Install dependencies
         run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
           curl https://rclone.org/install.sh | sudo bash
 
       - name: Configure rclone
@@ -28,70 +31,68 @@ jobs:
           ${{ secrets.RCLONE_CONFIG }}
           EOF
 
-      - name: Prepare download folder
-        run: mkdir -p downloads
-
-      - name: Save URL list
-        run: |
-          cat << 'EOF' > urls.txt
-          ${{ github.event.inputs.file_urls }}
-          EOF
-
-      - name: Download files in parallel
-        shell: bash
+      - name: Prepare folders
         run: |
           mkdir -p downloads
           touch failed_downloads.txt
-      
-          cat urls.txt | tr -d '\r' | grep -v '^\s*$' | xargs -P 16 -n 1 -I {} bash -c '
-            url="{}"
-      
-            filename=$(basename "$(echo "$url" | cut -d "?" -f1)")
-      
-            if [ -z "$filename" ] || [ "$filename" = "/" ]; then
-              filename="file_$(date +%s%N)"
-            fi
-      
-            echo "Downloading: $url -> $filename"
-      
-            if ! curl -L \
-              --fail \
-              --retry 5 \
-              --retry-delay 5 \
-              --connect-timeout 30 \
-              --max-time 7200 \
-              "$url" \
-              -o "downloads/$filename"; then
-      
-              echo "FAILED: $url" | tee -a failed_downloads.txt
-              rm -f "downloads/$filename"
-            fi
-          '
-      
-          echo "Finished downloads"
 
-      - name: Show failed downloads
+      - name: Parse URLs JSON
         run: |
-          if [ -s failed_downloads.txt ]; then
-            echo "Some downloads failed:"
-            cat failed_downloads.txt
-          else
-            echo "All downloads succeeded"
-          fi
-      
-      - name: Upload failed links log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: failed-downloads-log
-          path: failed_downloads.txt
+          echo '${{ github.event.inputs.urls_json }}' | jq -r '.[]' > urls.txt
+          echo "URLs parsed:"
+          cat urls.txt
 
-      - name: List downloaded files
+      - name: Download files
+        shell: bash
+        run: |
+          while IFS= read -r url || [ -n "$url" ]; do
+            (
+              clean_url="$(echo "$url" | tr -d '\r' | xargs)"
+
+              if [ -z "$clean_url" ]; then
+                exit 0
+              fi
+
+              filename=$(basename "$(echo "$clean_url" | cut -d '?' -f1)")
+
+              if [ -z "$filename" ] || [ "$filename" = "/" ] || [ "$filename" = "." ]; then
+                filename="file_$(date +%s%N)"
+              fi
+
+              echo "Downloading: $clean_url -> $filename"
+
+              if ! curl -L \
+                --fail \
+                --retry 5 \
+                --retry-delay 5 \
+                --connect-timeout 30 \
+                --max-time 7200 \
+                "$clean_url" \
+                -o "downloads/$filename"; then
+
+                echo "$clean_url" >> failed_downloads.txt
+                rm -f "downloads/$filename"
+              fi
+            ) &
+            
+            while [ "$(jobs -r | wc -l)" -ge 16 ]; do
+              sleep 1
+            done
+
+          done < urls.txt
+
+          wait
+
+      - name: Show results
         run: |
           echo "Downloaded files:"
-          ls -lah downloads
+          ls -lah downloads || true
 
-      - name: Sync files to Google Drive
+          echo ""
+          echo "Failed downloads:"
+          cat failed_downloads.txt || true
+
+      - name: Sync to Google Drive
         run: |
           rclone copy downloads remote:GithubUploads \
             --progress \
@@ -101,6 +102,14 @@ jobs:
             --drive-chunk-size=64M \
             --stats=10s
 
+      - name: Upload failed links log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-downloads
+          path: failed_downloads.txt
+
       - name: Cleanup
         if: always()
-        run: rm -rf downloads urls.txt
+        run: |
+          rm -rf downloads urls.txt failed_downloads.txt
