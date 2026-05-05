@@ -1,0 +1,40 @@
+name: Clear Google Drive Folder
+
+on:
+  workflow_dispatch:
+
+jobs:
+  clear:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install rclone
+        run: |
+          curl https://rclone.org/install.sh | sudo bash
+
+      - name: Configure rclone
+        run: |
+          mkdir -p ~/.config/rclone
+          cat << 'EOF' > ~/.config/rclone/rclone.conf
+          ${{ secrets.RCLONE_CONFIG }}
+          EOF
+
+      - name: Show files before deletion
+        run: |
+          echo "Files currently in GithubUploads:"
+          rclone ls remote:GithubUploads || true
+
+      - name: Delete all files in GithubUploads
+        run: |
+          echo "Deleting all files from remote:GithubUploads..."
+          rclone delete remote:GithubUploads --drive-use-trash=false
+          rclone rmdirs remote:GithubUploads --leave-root
+
+      - name: Verify cleanup
+        run: |
+          echo "Remaining files after cleanup:"
+          rclone ls remote:GithubUploads || true
