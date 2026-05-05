@@ -32,4 +32,26 @@ jobs:
 
       - name: Upload to Google Drive
         run: |
-          rclone copy downloads remote:GithubUploads --progress
+          rclone copy downloads remote:GithubUploads
+  
+      - name: Generate private direct download links
+        shell: bash
+        run: |
+          touch uploaded_private_direct_links.txt
+      
+          for file in downloads/*; do
+            [ -f "$file" ] || continue
+      
+            filename=$(basename "$file")
+      
+            file_id=$(rclone lsjson remote:GithubUploads/"$filename" \
+              --files-only \
+              --metadata | jq -r '.[0].ID')
+      
+            if [ -n "$file_id" ] && [ "$file_id" != "null" ]; then
+              link="https://drive.google.com/uc?id=${file_id}&export=download"
+      
+              echo "$filename -> $link"
+              echo "$filename -> $link" >> uploaded_private_direct_links.txt
+            fi
+          done
