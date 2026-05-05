@@ -37,4 +37,7 @@ And you're ready to go.
 
 ## Considerations
 
-Delete your workflow runs or links will be exposed.
+- Delete your workflow runs or links will be exposed.
+- Action will give you direct download links just look closer after upload logs.
+
+_Have fun 🍕_
