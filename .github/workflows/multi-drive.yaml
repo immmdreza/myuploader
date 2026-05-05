@@ -120,6 +120,19 @@ jobs:
             fi
           done
 
+      - name: Output links as JSON for CLI
+        run: |
+          JSON="{}"
+          while IFS= read -r line; do
+            # lines look like: "filename.zip -> https://drive.google.com/uc?id=abc&export=download"
+            if [[ "$line" =~ ^(.*)\ -\>\ (https://.*)$ ]]; then
+              filename="${BASH_REMATCH[1]}"
+              url="${BASH_REMATCH[2]}"
+              JSON=$(jq -n --argjson prev "$JSON" --arg fn "$filename" --arg u "$url" '$prev + {($fn): $u}')
+            fi
+          done < uploaded_private_direct_links.txt
+          echo "GDRIVE_LINKS=$JSON"
+
       - name: Upload failed links log
         if: always()
         uses: actions/upload-artifact@v4
