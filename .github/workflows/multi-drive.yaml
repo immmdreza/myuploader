@@ -39,8 +39,6 @@ jobs:
       - name: Parse URLs JSON
         run: |
           echo '${{ github.event.inputs.urls_json }}' | jq -r '.[]' > urls.txt
-          echo "URLs parsed:"
-          cat urls.txt
 
       - name: Download files
         shell: bash
@@ -59,7 +57,7 @@ jobs:
                 filename="file_$(date +%s%N)"
               fi
 
-              echo "Downloading: $clean_url -> $filename"
+              echo "Downloading: $filename"
 
               if ! curl -L \
                 --fail \
@@ -70,7 +68,7 @@ jobs:
                 "$clean_url" \
                 -o "downloads/$filename"; then
 
-                echo "$clean_url" >> failed_downloads.txt
+                echo "$filename" >> failed_downloads.txt
                 rm -f "downloads/$filename"
               fi
             ) &
@@ -83,24 +81,44 @@ jobs:
 
           wait
 
-      - name: Show results
+      - name: Show summary
         run: |
-          echo "Downloaded files:"
-          ls -lah downloads || true
-
-          echo ""
-          echo "Failed downloads:"
-          cat failed_downloads.txt || true
+          success_count=$(find downloads -type f | wc -l)
+          fail_count=$(wc -l < failed_downloads.txt || echo 0)
+      
+          echo "Successful downloads: $success_count"
+          echo "Failed downloads: $fail_count"
 
       - name: Sync to Google Drive
         run: |
           rclone copy downloads remote:GithubUploads \
-            --progress \
             --transfers=16 \
             --checkers=16 \
             --fast-list \
             --drive-chunk-size=64M \
             --stats=10s
+
+      - name: Generate private direct download links
+        shell: bash
+        run: |
+          touch uploaded_private_direct_links.txt
+      
+          for file in downloads/*; do
+            [ -f "$file" ] || continue
+      
+            filename=$(basename "$file")
+      
+            file_id=$(rclone lsjson remote:GithubUploads/"$filename" \
+              --files-only \
+              --metadata | jq -r '.[0].ID')
+      
+            if [ -n "$file_id" ] && [ "$file_id" != "null" ]; then
+              link="https://drive.google.com/uc?id=${file_id}&export=download"
+      
+              echo "$filename -> $link"
+              echo "$filename -> $link" >> uploaded_private_direct_links.txt
+            fi
+          done
 
       - name: Upload failed links log
         if: always()
