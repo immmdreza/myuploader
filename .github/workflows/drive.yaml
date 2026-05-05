@@ -1,0 +1,35 @@
+name: Download URL and Upload to Google Drive
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_url:
+        description: "URL of file to download"
+        required: true
+        type: string
+
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install rclone
+        run: curl https://rclone.org/install.sh | sudo bash
+
+      - name: Setup Google Drive credentials
+        run: |
+          mkdir -p ~/.config/rclone
+          echo '${{ secrets.RCLONE_CONFIG }}' > ~/.config/rclone/rclone.conf
+
+      - name: Download file
+        run: |
+          mkdir downloads
+          cd downloads
+          curl -L "${{ github.event.inputs.file_url }}" -O
+
+      - name: Upload to Google Drive
+        run: |
+          rclone copy downloads remote:GithubUploads --progress
