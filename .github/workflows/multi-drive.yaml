@@ -4,10 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       urls_json:
-        description: 'JSON array of URLs'
+        description: "Single URL or JSON array of URLs"
         required: true
         type: string
         default: '["https://example.com/file1.zip","https://example.com/file2.mp4"]'
+
+      request_id:
+        description: "Unique request ID from client"
+        required: true
+        type: string
+        default: "manual-test"
 
 jobs:
   transfer:
@@ -20,9 +26,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
+          sudo apt-get update -qq
           sudo apt-get install -y jq
-          curl https://rclone.org/install.sh | sudo bash
+          curl -s https://rclone.org/install.sh | sudo bash
 
       - name: Configure rclone
         run: |
@@ -35,10 +41,19 @@ jobs:
         run: |
           mkdir -p downloads
           touch failed_downloads.txt
+          touch uploaded_private_direct_links.txt
 
-      - name: Parse URLs JSON
+      - name: Parse input URLs
+        shell: bash
         run: |
-          echo '${{ github.event.inputs.urls_json }}' | jq -r '.[]' > urls.txt
+          INPUT='${{ github.event.inputs.urls_json }}'
+
+          if echo "$INPUT" | jq -e 'type == "array"' >/dev/null 2>&1; then
+            echo "$INPUT" | jq -r '.[]' > urls.txt
+          else
+            CLEANED=$(echo "$INPUT" | sed 's/^"//;s/"$//')
+            echo "$CLEANED" > urls.txt
+          fi
 
       - name: Download files
         shell: bash
@@ -46,10 +61,7 @@ jobs:
           while IFS= read -r url || [ -n "$url" ]; do
             (
               clean_url="$(echo "$url" | tr -d '\r' | xargs)"
-
-              if [ -z "$clean_url" ]; then
-                exit 0
-              fi
+              [ -z "$clean_url" ] && exit 0
 
               filename=$(basename "$(echo "$clean_url" | cut -d '?' -f1)")
 
@@ -57,7 +69,7 @@ jobs:
                 filename="file_$(date +%s%N)"
               fi
 
-              echo "Downloading: $filename"
+              echo "Downloading $filename"
 
               if ! curl -L \
                 --fail \
@@ -66,13 +78,15 @@ jobs:
                 --connect-timeout 30 \
                 --max-time 7200 \
                 "$clean_url" \
-                -o "downloads/$filename"; then
+                -o "downloads/$filename" \
+                --silent \
+                --show-error; then
 
                 echo "$filename" >> failed_downloads.txt
                 rm -f "downloads/$filename"
               fi
             ) &
-            
+
             while [ "$(jobs -r | wc -l)" -ge 16 ]; do
               sleep 1
             done
@@ -82,65 +96,82 @@ jobs:
           wait
 
       - name: Show summary
+        shell: bash
         run: |
           success_count=$(find downloads -type f | wc -l)
           fail_count=$(wc -l < failed_downloads.txt || echo 0)
-      
+
           echo "Successful downloads: $success_count"
           echo "Failed downloads: $fail_count"
 
-      - name: Sync to Google Drive
+      - name: Upload files to Google Drive
         run: |
           rclone copy downloads remote:GithubUploads \
             --transfers=16 \
             --checkers=16 \
             --fast-list \
             --drive-chunk-size=64M \
-            --stats=10s
+            --stats-one-line \
+            --stats=30s
 
       - name: Generate private direct download links
         shell: bash
         run: |
-          touch uploaded_private_direct_links.txt
-      
           for file in downloads/*; do
             [ -f "$file" ] || continue
-      
+
             filename=$(basename "$file")
-      
+
             file_id=$(rclone lsjson remote:GithubUploads/"$filename" \
               --files-only \
               --metadata | jq -r '.[0].ID')
-      
+
             if [ -n "$file_id" ] && [ "$file_id" != "null" ]; then
               link="https://drive.google.com/uc?id=${file_id}&export=download"
-      
-              echo "$filename -> $link"
               echo "$filename -> $link" >> uploaded_private_direct_links.txt
             fi
           done
 
-      - name: Output links as JSON for CLI
+      - name: Export links as JSON env var
+        shell: bash
         run: |
           JSON="{}"
+
           while IFS= read -r line; do
-            # lines look like: "filename.zip -> https://drive.google.com/uc?id=abc&export=download"
             if [[ "$line" =~ ^(.*)\ -\>\ (https://.*)$ ]]; then
               filename="${BASH_REMATCH[1]}"
               url="${BASH_REMATCH[2]}"
-              JSON=$(jq -n --argjson prev "$JSON" --arg fn "$filename" --arg u "$url" '$prev + {($fn): $u}')
+
+              JSON=$(jq -n \
+                --argjson prev "$JSON" \
+                --arg fn "$filename" \
+                --arg u "$url" \
+                '$prev + {($fn): $u}')
             fi
           done < uploaded_private_direct_links.txt
-          echo "GDRIVE_LINKS=$JSON"
 
-      - name: Upload failed links log
+          echo "GDRIVE_LINKS<<EOF" >> $GITHUB_ENV
+          echo "$JSON" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Upload generated links artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gdrive-private-links-${{ github.event.inputs.request_id }}
+          path: uploaded_private_direct_links.txt
+
+      - name: Upload failed downloads artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: failed-downloads
+          name: failed-downloads-${{ github.event.inputs.request_id }}
           path: failed_downloads.txt
 
       - name: Cleanup
         if: always()
         run: |
-          rm -rf downloads urls.txt failed_downloads.txt
+          rm -rf \
+            downloads \
+            urls.txt \
+            failed_downloads.txt \
+            uploaded_private_direct_links.txt
