@@ -1,0 +1,73 @@
+name: Download Multiple URLs and Sync to Google Drive
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_urls:
+        description: "Paste multiple file URLs (one per line)"
+        required: true
+        type: string
+
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install rclone
+        run: |
+          curl https://rclone.org/install.sh | sudo bash
+
+      - name: Configure rclone
+        run: |
+          mkdir -p ~/.config/rclone
+          cat << 'EOF' > ~/.config/rclone/rclone.conf
+          ${{ secrets.RCLONE_CONFIG }}
+          EOF
+
+      - name: Prepare download folder
+        run: mkdir -p downloads
+
+      - name: Save URL list
+        run: |
+          cat << 'EOF' > urls.txt
+          ${{ github.event.inputs.file_urls }}
+          EOF
+
+      - name: Download files in parallel
+        shell: bash
+        run: |
+          cat urls.txt | grep -v '^\s*$' | xargs -P 16 -n 1 -I {} bash -c '
+            echo "Downloading: {}"
+            curl -L \
+              --fail \
+              --retry 5 \
+              --retry-delay 5 \
+              --connect-timeout 30 \
+              --max-time 7200 \
+              -O \
+              --output-dir downloads \
+              "{}"
+          '
+
+      - name: List downloaded files
+        run: |
+          echo "Downloaded files:"
+          ls -lah downloads
+
+      - name: Sync files to Google Drive
+        run: |
+          rclone copy downloads remote:GithubUploads \
+            --progress \
+            --transfers=16 \
+            --checkers=16 \
+            --fast-list \
+            --drive-chunk-size=64M \
+            --stats=10s
+
+      - name: Cleanup
+        if: always()
+        run: rm -rf downloads urls.txt
