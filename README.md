@@ -34,3 +34,7 @@ access_token = {...}
 ```
 
 And you're ready to go.
+
+## Considerations
+
+Delete your workflow runs or links will be exposed.
