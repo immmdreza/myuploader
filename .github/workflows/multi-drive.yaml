@@ -40,6 +40,9 @@ jobs:
       - name: Download files in parallel
         shell: bash
         run: |
+          mkdir -p downloads
+          touch failed_downloads.txt
+      
           cat urls.txt | tr -d '\r' | grep -v '^\s*$' | xargs -P 16 -n 1 -I {} bash -c '
             url="{}"
       
@@ -51,15 +54,37 @@ jobs:
       
             echo "Downloading: $url -> $filename"
       
-            curl -L \
+            if ! curl -L \
               --fail \
               --retry 5 \
               --retry-delay 5 \
               --connect-timeout 30 \
               --max-time 7200 \
               "$url" \
-              -o "downloads/$filename"
+              -o "downloads/$filename"; then
+      
+              echo "FAILED: $url" | tee -a failed_downloads.txt
+              rm -f "downloads/$filename"
+            fi
           '
+      
+          echo "Finished downloads"
+
+      - name: Show failed downloads
+        run: |
+          if [ -s failed_downloads.txt ]; then
+            echo "Some downloads failed:"
+            cat failed_downloads.txt
+          else
+            echo "All downloads succeeded"
+          fi
+      
+      - name: Upload failed links log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-downloads-log
+          path: failed_downloads.txt
 
       - name: List downloaded files
         run: |
