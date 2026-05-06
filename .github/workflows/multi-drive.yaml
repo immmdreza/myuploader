@@ -21,8 +21,7 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
@@ -64,10 +63,7 @@ jobs:
               [ -z "$clean_url" ] && exit 0
 
               filename=$(basename "$(echo "$clean_url" | cut -d '?' -f1)")
-
-              if [ -z "$filename" ] || [ "$filename" = "/" ] || [ "$filename" = "." ]; then
-                filename="file_$(date +%s%N)"
-              fi
+              [ -z "$filename" ] && filename="file_$(date +%s%N)"
 
               echo "Downloading $filename"
 
@@ -90,21 +86,11 @@ jobs:
             while [ "$(jobs -r | wc -l)" -ge 16 ]; do
               sleep 1
             done
-
           done < urls.txt
 
           wait
 
-      - name: Show summary
-        shell: bash
-        run: |
-          success_count=$(find downloads -type f | wc -l)
-          fail_count=$(wc -l < failed_downloads.txt || echo 0)
-
-          echo "Successful downloads: $success_count"
-          echo "Failed downloads: $fail_count"
-
-      - name: Upload files to Google Drive
+      - name: Upload files
         run: |
           rclone copy downloads remote:GithubUploads \
             --transfers=16 \
@@ -114,9 +100,11 @@ jobs:
             --stats-one-line \
             --stats=30s
 
-      - name: Generate private direct download links
+      - name: Generate output JSON
         shell: bash
         run: |
+          JSON="{}"
+
           for file in downloads/*; do
             [ -f "$file" ] || continue
 
@@ -128,44 +116,17 @@ jobs:
 
             if [ -n "$file_id" ] && [ "$file_id" != "null" ]; then
               link="https://drive.google.com/uc?id=${file_id}&export=download"
-              echo "$filename -> $link" >> uploaded_private_direct_links.txt
-            fi
-          done
-
-      - name: Export links as JSON env var
-        shell: bash
-        run: |
-          JSON="{}"
-
-          while IFS= read -r line; do
-            if [[ "$line" =~ ^(.*)\ -\>\ (https://.*)$ ]]; then
-              filename="${BASH_REMATCH[1]}"
-              url="${BASH_REMATCH[2]}"
 
               JSON=$(jq -n \
                 --argjson prev "$JSON" \
                 --arg fn "$filename" \
-                --arg u "$url" \
+                --arg u "$link" \
                 '$prev + {($fn): $u}')
             fi
-          done < uploaded_private_direct_links.txt
+          done
 
-          echo "GDRIVE_LINKS<<EOF" >> $GITHUB_ENV
-          echo "$JSON" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-
-      - name: Upload generated links artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: gdrive-private-links-${{ github.event.inputs.request_id }}
-          path: uploaded_private_direct_links.txt
-
-      - name: Upload failed downloads artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: failed-downloads-${{ github.event.inputs.request_id }}
-          path: failed_downloads.txt
+          echo "REQUEST_ID=${{ github.event.inputs.request_id }}"
+          echo "GDRIVE_LINKS_JSON=$JSON"
 
       - name: Cleanup
         if: always()
