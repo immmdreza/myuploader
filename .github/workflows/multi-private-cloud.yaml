@@ -21,6 +21,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Configure custom DNS
+        run: |
+          sudo bash -c 'printf "nameserver 195.177.255.170\nnameserver 178.239.151.228\n" > /etc/resolv.conf'
+
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
