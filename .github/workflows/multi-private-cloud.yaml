@@ -1,0 +1,124 @@
+name: Multi URL Download and Upload to Private Cloud Storage
+
+on:
+  workflow_dispatch:
+    inputs:
+      urls_json:
+        description: "Single URL or JSON array of URLs"
+        required: true
+        type: string
+
+      request_id:
+        description: "Unique request ID from client"
+        required: true
+        type: string
+
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y jq
+          curl -s https://rclone.org/install.sh | sudo bash
+
+      - name: Configure rclone
+        run: |
+          mkdir -p ~/.config/rclone
+
+          cat << EOF > ~/.config/rclone/rclone.conf
+          [cloud]
+          type = s3
+          provider = Other
+          access_key_id = ${{ secrets.RCLONE_S3_ACCESS_KEY_ID }}
+          secret_access_key = ${{ secrets.RCLONE_S3_SECRET_ACCESS_KEY }}
+          endpoint = ${{ secrets.RCLONE_S3_ENDPOINT }}
+          acl = private
+          EOF
+
+      - name: Prepare folders
+        run: mkdir -p downloads
+
+      - name: Parse URLs
+        shell: bash
+        run: |
+          INPUT='${{ github.event.inputs.urls_json }}'
+
+          if echo "$INPUT" | jq -e 'type == "array"' >/dev/null 2>&1; then
+            echo "$INPUT" | jq -r '.[]' > urls.txt
+          else
+            CLEANED=$(echo "$INPUT" | sed 's/^"//;s/"$//')
+            echo "$CLEANED" > urls.txt
+          fi
+
+      - name: Download files
+        shell: bash
+        run: |
+          while IFS= read -r url || [ -n "$url" ]; do
+            (
+              clean_url="$(echo "$url" | tr -d '\r' | xargs)"
+              [ -z "$clean_url" ] && exit 0
+
+              filename=$(basename "$(echo "$clean_url" | cut -d '?' -f1)")
+              [ -z "$filename" ] && filename="file_$(date +%s%N)"
+
+              echo "Downloading $filename"
+
+              curl -L \
+                --fail \
+                --retry 5 \
+                --retry-delay 5 \
+                --connect-timeout 30 \
+                --max-time 7200 \
+                "$clean_url" \
+                -o "downloads/$filename" \
+                --silent \
+                --show-error || rm -f "downloads/$filename"
+            ) &
+
+            while [ "$(jobs -r | wc -l)" -ge 16 ]; do
+              sleep 1
+            done
+          done < urls.txt
+
+          wait
+
+      - name: Upload files
+        run: |
+          rclone copy downloads cloud:${{ secrets.RCLONE_S3_BUCKET }} \
+            --transfers=16 \
+            --checkers=16 \
+            --s3-no-check-bucket
+
+      - name: Generate signed URLs
+        shell: bash
+        run: |
+          JSON="{}"
+
+          for file in downloads/*; do
+            [ -f "$file" ] || continue
+
+            filename=$(basename "$file")
+
+            link=$(rclone link \
+              --expire 168h \
+              cloud:${{ secrets.RCLONE_S3_BUCKET }}/"$filename")
+
+            JSON=$(jq -n \
+              --argjson prev "$JSON" \
+              --arg fn "$filename" \
+              --arg u "$link" \
+              '$prev + {($fn): $u}')
+          done
+
+          echo "REQUEST_ID=${{ github.event.inputs.request_id }}"
+          echo "CLOUD_LINKS_JSON=$JSON"
+
+      - name: Cleanup
+        if: always()
+        run: rm -rf downloads urls.txt
