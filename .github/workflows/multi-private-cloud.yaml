@@ -34,11 +34,10 @@ jobs:
           cat << EOF > ~/.config/rclone/rclone.conf
           [cloud]
           type = s3
-          provider = Other
+          provider = Minio
           access_key_id = ${{ secrets.RCLONE_S3_ACCESS_KEY_ID }}
           secret_access_key = ${{ secrets.RCLONE_S3_SECRET_ACCESS_KEY }}
           endpoint = ${{ secrets.RCLONE_S3_ENDPOINT }}
-          acl = private
           EOF
 
       - name: Prepare folders
@@ -88,12 +87,17 @@ jobs:
 
           wait
 
+      - name: Connectivity test
+        run: |
+          rclone lsd cloud || exit
+
       - name: Upload files
         run: |
           rclone copy downloads cloud:${{ secrets.RCLONE_S3_BUCKET }} \
             --transfers=16 \
             --checkers=16 \
             --s3-no-check-bucket
+            -vv
 
       - name: Generate signed URLs
         shell: bash
