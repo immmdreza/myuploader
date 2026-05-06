@@ -16,3 +16,9 @@ jobs:
       - name: Check connection
         run: |
           curl -I --connect-timeout 15 ${{ github.event.inputs.url }} || exit
+
+      steps:
+      - name: Ping connection
+        run: |
+          ping ${{ github.event.inputs.url }}
+
