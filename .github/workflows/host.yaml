@@ -1,0 +1,56 @@
+name: Download URL and Upload to cPanel Host
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_url:
+        description: "URL of file to download"
+        required: true
+        type: string
+
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download file
+        run: |
+          mkdir downloads
+          cd downloads
+          curl -L "${{ github.event.inputs.file_url }}" -O
+          echo "Downloaded file(s):"
+          ls -la
+
+      - name: Upload to cPanel host via upload.php
+        env:
+          UPLOAD_URL: ${{ secrets.UPLOAD_URL }} # e.g. https://yourdomain.com/upload.php
+          API_TOKEN: ${{ secrets.API_TOKEN }} # your secret token
+        run: |
+          for file in downloads/*; do
+            [ -f "$file" ] || continue
+            echo "Uploading: $file"
+            
+            response=$(curl -s -w "\n%{http_code}" \
+              -X POST \
+              -F "file=@$file" \
+              -F "token=$API_TOKEN" \
+              "$UPLOAD_URL")
+            
+            # Extract HTTP status (last line) and body
+            http_code=$(echo "$response" | tail -n1)
+            body=$(echo "$response" | sed '$d')
+            
+            echo "HTTP status: $http_code"
+            echo "Response: $body"
+            
+            if [[ "$http_code" -ne 200 ]]; then
+              echo "::error ::Upload failed for $file with status $http_code"
+              exit 1
+            fi
+          done
+
+      - name: (Optional) Output uploaded filenames
+        if: always()
+        run: |
+          echo "Files that were uploaded:"
+          ls downloads/
