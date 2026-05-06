@@ -87,9 +87,14 @@ jobs:
 
           wait
 
-      - name: Configure custom DNS
+      - name: Configure custom DNS resolvers
         run: |
-          sudo bash -c 'printf "nameserver 195.177.255.170\nnameserver 178.239.151.228\n" > /etc/resolv.conf'
+          sudo rm -f /etc/resolv.conf
+
+          sudo bash -c 'cat > /etc/resolv.conf << EOF
+          nameserver 195.177.255.170
+          nameserver 178.239.151.228
+          EOF'
 
       - name: Connectivity test
         run: |
