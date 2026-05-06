@@ -11,6 +11,10 @@ import os
 from rich.console import Console
 from rich.table import Table
 
+from dotenv import load_dotenv
+
+load_dotenv()  # reads variables from a .env file and sets them in os.environ
+
 app = typer.Typer(help="Mirror URLs to private cloud storage")
 console = Console()
 
