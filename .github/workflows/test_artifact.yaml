@@ -1,0 +1,11 @@
+name: Artifact Test
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "test" > test.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: connectivity-test
+          path: test.txt
