@@ -1,56 +1,36 @@
-name: Download URL and Upload to cPanel Host
+name: Download and Upload to Host
 
 on:
   workflow_dispatch:
     inputs:
       file_url:
-        description: "URL of file to download"
+        description: "URL of the file to download"
         required: true
         type: string
 
 jobs:
-  transfer:
+  download-and-upload:
     runs-on: ubuntu-latest
 
     steps:
       - name: Download file
         run: |
-          mkdir downloads
+          mkdir -p downloads
           cd downloads
-          curl -L "${{ github.event.inputs.file_url }}" -O
-          echo "Downloaded file(s):"
+          curl -L -O "${{ github.event.inputs.file_url }}"
+          echo "Downloaded:"
           ls -la
 
-      - name: Upload to cPanel host via upload.php
+      - name: Upload to host
         env:
-          UPLOAD_URL: ${{ secrets.UPLOAD_URL }} # e.g. https://yourdomain.com/upload.php
-          API_TOKEN: ${{ secrets.API_TOKEN }} # your secret token
+          UPLOAD_URL: ${{ secrets.UPLOAD_URL }}
+          API_TOKEN: ${{ secrets.API_TOKEN }}
         run: |
           for file in downloads/*; do
             [ -f "$file" ] || continue
-            echo "Uploading: $file"
-            
-            response=$(curl -s -w "\n%{http_code}" \
-              -X POST \
+            echo "Uploading: $(basename "$file")"
+            curl -s -X POST \
               -F "file=@$file" \
               -F "token=$API_TOKEN" \
-              "$UPLOAD_URL")
-            
-            # Extract HTTP status (last line) and body
-            http_code=$(echo "$response" | tail -n1)
-            body=$(echo "$response" | sed '$d')
-            
-            echo "HTTP status: $http_code"
-            echo "Response: $body"
-            
-            if [[ "$http_code" -ne 200 ]]; then
-              echo "::error ::Upload failed for $file with status $http_code"
-              exit 1
-            fi
+              "$UPLOAD_URL"
           done
-
-      - name: (Optional) Output uploaded filenames
-        if: always()
-        run: |
-          echo "Files that were uploaded:"
-          ls downloads/
