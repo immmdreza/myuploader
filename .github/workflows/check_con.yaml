@@ -19,5 +19,5 @@ jobs:
 
       - name: Ping connection
         run: |
-          ping ${{ github.event.inputs.url }}
+          ping -w 5000 ${{ github.event.inputs.url }}
 
