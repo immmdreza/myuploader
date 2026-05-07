@@ -23,8 +23,8 @@ jobs:
       - name: Upload via FTP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.4
         with:
-          server: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
+          server: 3002048091.cloudylink.com
+          username: webapp@cutify.ir
           password: ${{ secrets.FTP_PASSWORD }}
           local-dir: /tmp/
-          server-dir: /uploads/   # Destination on your host
+
