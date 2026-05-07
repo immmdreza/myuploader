@@ -1,0 +1,30 @@
+name: Download and Upload via FTP
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_url:
+        description: "URL of the file to download"
+        required: true
+        type: string
+
+jobs:
+  upload-via-ftp:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download file
+        run: |
+          cd /tmp
+          curl -L -O "${{ github.event.inputs.file_url }}"
+          echo "Downloaded files:"
+          ls -la /tmp
+
+      - name: Upload via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: /tmp/
+          server-dir: /uploads/   # Destination on your host
